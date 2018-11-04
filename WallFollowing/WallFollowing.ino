@@ -14,6 +14,8 @@ const int MAX_MOTOR_SPEED = 160;
 
 const int STEPS_PER_ROTATION = 200;
 
+const int SENSOR_PULSE_INTERVAL = 100000;
+
 const float P_GAIN = 2;
 const float I_GAIN = 0;
 const float D_GAIN = 0;
@@ -134,7 +136,7 @@ void loop(){
 
   currPulseMicros = micros();
 
-  if(currPulseMicros - prevPulseMicros >= 100000){
+  if(currPulseMicros - prevPulseMicros >= SENSOR_PULSE_INTERVAL){
 
     prevPulseMicros = currPulseMicros;
 
