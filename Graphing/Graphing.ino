@@ -2,6 +2,7 @@
 #include <NewPing.h>
 #include "pinDefs.h"
 
+const int SENSOR_COUNT = 3;
 const int MAX_SENSING_DISTANCE = 50;
 
 const int WHEEL_DIAMETER = 65;
@@ -49,7 +50,12 @@ float errorSum;
 
 float stepSize = 1;
 
-NewPing sonar(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN, MAX_SENSING_DISTANCE);
+NewPing sonar[SONAR_COUNT] = {
+  NewPing(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN, MAX_SENSING_DISTANCE);
+  NewPing(FRONT_TRIG_PIN, FRONT_ECHO_PIN, MAX_SENSING_DISTANCE);
+  NewPing(LEFT_TRIG_PIN, LEFT_ECHO_PIN, MAX_SENSING_DISTANCE);
+}
+
 
 void setup(){
 
@@ -142,23 +148,8 @@ void loop(){
 
     distance = sonar.ping() * 0.034 / 2;
 
-    /*
-    Serial.print("Distance: ");
-    Serial.print(distance);
-    Serial.println(" cm");
-    */
-
     error = distanceToWall - distance;
     errorSum = errorSum + error;
-
-    /*
-    Serial.print("Previous error: ");
-    Serial.println(prevError);
-    Serial.print("Error: ");
-    Serial.println(error);
-    Serial.print("Error sum: ");
-    Serial.println(errorSum);
-    */
 
     rightMotorSpeed = DEFAULT_MOTOR_SPEED + (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
     leftMotorSpeed = DEFAULT_MOTOR_SPEED - (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
@@ -170,13 +161,6 @@ void loop(){
 
     rightMotorStepInterval = getStepInterval(rightMotorSpeed);
     leftMotorStepInterval = getStepInterval(leftMotorSpeed);
-
-    /*
-    Serial.print("RightMotorSpeed: ");
-    Serial.println(rightMotorSpeed);
-    Serial.print("LeftMotorSpeed: ");
-    Serial.println(leftMotorSpeed);
-    */
 
   }
 

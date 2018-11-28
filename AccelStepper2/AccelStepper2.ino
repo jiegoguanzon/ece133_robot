@@ -1,5 +1,7 @@
 #include <math.h>
 #include <NewPing.h>
+#include <AccelStepper.h>
+#include <MultiStepper.h>
 #include "pinDefs.h"
 
 const int MAX_SENSING_DISTANCE = 50;
@@ -49,6 +51,16 @@ float errorSum;
 
 float stepSize = 1;
 
+long rightCurrPos = 0;
+long leftCurrPos = 0;
+int state = 0;
+int frontSteps = 285 / stepSize;
+int turnSteps = 125 / stepSize;
+long positions[2];
+
+AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+AccelStepper leftStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
+
 NewPing sonar(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN, MAX_SENSING_DISTANCE);
 
 void setup(){
@@ -91,24 +103,11 @@ void setup(){
   digitalWrite(LEFT_RESET_PIN, LOW);      // reset left motor
   digitalWrite(LEFT_SLEEP_PIN, LOW);      // sleep left motor
 
-  rightMotorSpeed = DEFAULT_MOTOR_SPEED;
-  leftMotorSpeed = DEFAULT_MOTOR_SPEED;
+  rightStepper.setMaxSpeed(500);
+  rightStepper.setAcceleration(1000);
 
-  prevRightMicros = 0;
-  prevLeftMicros = 0;
-  prevPulseMicros = 0;
-  prevDistance = 0;
-  prevError = 0;
-  errorSum = 0;
-
-  distanceToWall = 4;
-
-  distancePerStep = stepSize * (WHEEL_DIAMETER * M_PI) / STEPS_PER_ROTATION;
-  stepsPerUnitLength = round(UNIT_LENGTH / distancePerStep);
-  stepsPerUnitTurn = round((ROBOT_DIAMETER * M_PI / 4) / distancePerStep);
-
-  rightMotorStepInterval = getStepInterval(rightMotorSpeed);
-  leftMotorStepInterval = getStepInterval(leftMotorSpeed);
+  leftStepper.setMaxSpeed(500);
+  leftStepper.setAcceleration(1000);
 
   digitalWrite(RIGHT_M2_PIN, LOW);
   digitalWrite(RIGHT_M1_PIN, LOW);
@@ -134,71 +133,41 @@ void setup(){
 
 void loop(){
   
-  currPulseMicros = micros();
-
-  if((currPulseMicros - prevPulseMicros) >= 250000){
-
-    prevPulseMicros = currPulseMicros;
-
-    distance = sonar.ping() * 0.034 / 2;
-
-    /*
-    Serial.print("Distance: ");
-    Serial.print(distance);
-    Serial.println(" cm");
-    */
-
-    error = distanceToWall - distance;
-    errorSum = errorSum + error;
-
-    /*
-    Serial.print("Previous error: ");
-    Serial.println(prevError);
-    Serial.print("Error: ");
-    Serial.println(error);
-    Serial.print("Error sum: ");
-    Serial.println(errorSum);
-    */
-
-    rightMotorSpeed = DEFAULT_MOTOR_SPEED + (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
-    leftMotorSpeed = DEFAULT_MOTOR_SPEED - (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
-
-    prevError = error;
-
-    rightMotorSpeed = constrain(rightMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
-    leftMotorSpeed = constrain(leftMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
-
-    rightMotorStepInterval = getStepInterval(rightMotorSpeed);
-    leftMotorStepInterval = getStepInterval(leftMotorSpeed);
-
-    /*
-    Serial.print("RightMotorSpeed: ");
-    Serial.println(rightMotorSpeed);
-    Serial.print("LeftMotorSpeed: ");
-    Serial.println(leftMotorSpeed);
-    */
-
+  if(rightStepper.distanceToGo() == 0 && leftStepper.distanceToGo() == 0){
+    if(state == 0 || state == 1 || state == 2 || state == 4 || state == 6 || state == 7 || state == 8 || state == 10 || state == 12 || state == 14 || state == 16 || state == 18 || state == 20 || state == 22){
+      moveForward();
+    }
+    else if(state == 3 || state == 5 || state == 13 || state == 19 || state == 21){
+      turnLeft();
+    }
+    else if(state == 9 || state == 11 || state == 15 || state == 17){
+      turnRight();
+    }
+    state++;
   }
 
-  currRightMicros = micros();
-  currLeftMicros = micros();
-
-  stepMotor(0, RIGHT_STEP_PIN, rightMotorStepInterval, currRightMicros, prevRightMicros);
-  stepMotor(1, LEFT_STEP_PIN, leftMotorStepInterval, currLeftMicros, prevLeftMicros);
+  leftStepper.run();
+  rightStepper.run();
 
 }
 
-void stepMotor(int motor, const int stepPin, unsigned long stepInterval, unsigned long currMicros, unsigned long prevMicros){
-  if ((currMicros - prevMicros) >= stepInterval){
-    if(motor == 0)
-      prevRightMicros = currRightMicros;
-    else if (motor == 1)
-      prevLeftMicros = currLeftMicros;
-    digitalWrite(stepPin, HIGH);
-    digitalWrite(stepPin, LOW);
-  }
+void moveForward(){
+  positions[0] = rightStepper.currentPosition() + frontSteps;
+  positions[1] = leftStepper.currentPosition() - frontSteps;
+  rightStepper.moveTo(positions[0]);
+  leftStepper.moveTo(positions[1]);
 }
 
-unsigned long getStepInterval(int motorSpeed){
-  return (60.0000 / (motorSpeed * STEPS_PER_ROTATION)) * 1E6;
+void turnLeft(){
+  positions[0] = rightStepper.currentPosition() + turnSteps;
+  positions[1] = leftStepper.currentPosition() + turnSteps;
+  rightStepper.moveTo(positions[0]);
+  leftStepper.moveTo(positions[1]);
+}
+
+void turnRight(){
+  positions[0] = rightStepper.currentPosition() - turnSteps;
+  positions[1] = leftStepper.currentPosition() - turnSteps;
+  rightStepper.moveTo(positions[0]);
+  leftStepper.moveTo(positions[1]);
 }
