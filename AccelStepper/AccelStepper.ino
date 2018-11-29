@@ -55,7 +55,7 @@ long rightCurrPos = 0;
 long leftCurrPos = 0;
 int state = 0;
 int frontSteps = 285;
-int turnSteps = 127;
+int turnSteps = 125;
 long positions[2];
 
 AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);

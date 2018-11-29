@@ -160,8 +160,8 @@ void loop(){
     Serial.println(errorSum);
     */
 
-    rightMotorSpeed = DEFAULT_MOTOR_SPEED + (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
-    leftMotorSpeed = DEFAULT_MOTOR_SPEED - (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
+    rightMotorSpeed = DEFAULT_MOTOR_SPEED - (P_GAIN * error) - (I_GAIN * errorSum) - (D_GAIN * (error - prevError));
+    leftMotorSpeed = DEFAULT_MOTOR_SPEED + (P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError));
 
     prevError = error;
 

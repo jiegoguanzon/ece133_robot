@@ -166,7 +166,7 @@ void loop(){
       if(i == (SONAR_NUM - 1)){
 
         error = distance[0] - distance[1];
-        errorSum = error + prevError;
+        errorSum = errorSum + error;
 
         rightMotorSpeed = DEFAULT_MOTOR_SPEED - ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
         leftMotorSpeed = DEFAULT_MOTOR_SPEED + ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
@@ -179,9 +179,29 @@ void loop(){
 
         prevError = error;
 
+
       }
 
     }
+
+    Serial.print(distance[0]);
+    Serial.print(", ");
+    Serial.print(distance[1]);
+    Serial.print(", ");
+    Serial.print(distance[2]);
+    Serial.println("");
+
+    Serial.print(prevError);
+    Serial.print(", ");
+    Serial.print(error);
+    Serial.print(", ");
+    Serial.print(errorSum);
+    Serial.println("");
+
+    Serial.print(rightMotorSpeed);
+    Serial.print(", ");
+    Serial.print(leftMotorSpeed);
+    Serial.println("");
 
   }
   
