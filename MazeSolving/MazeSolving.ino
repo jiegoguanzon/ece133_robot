@@ -5,7 +5,7 @@
 #include "pinDefs.h"
 
 const int SONAR_NUM = 3;
-const int MAX_SENSING_DISTANCE = 20;
+const int MAX_SENSING_DISTANCE = 10;
 const int PING_INTERVAL = 33;
 
 const int WHEEL_DIAMETER = 65;
@@ -64,6 +64,11 @@ const int BASE_TURN_STEPS = 125;
 
 long positions[2];
 
+int prevCommand = 0;
+float phi = 0;
+int dy = 0;
+int dc = 0;
+
 AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
 AccelStepper leftStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
 
@@ -103,6 +108,9 @@ void setup(){
 
   pinMode(LEFT_TRIG_PIN, OUTPUT);
   pinMode(LEFT_ECHO_PIN, INPUT);
+
+  TIMSK2 = (TIMSK2 & B11111110) | 0x01;
+  TCCR2B = (TCCR2B & B11111000) | 0x01;
 
   digitalWrite(RIGHT_ENABLE_PIN, HIGH);   // disable right motor
   digitalWrite(LEFT_ENABLE_PIN, HIGH);    // disable left motor
@@ -150,6 +158,8 @@ void setup(){
   digitalWrite(RIGHT_ENABLE_PIN, LOW);    // enable right motor
   digitalWrite(LEFT_ENABLE_PIN, LOW);     // enable left motor
 
+  pingSensors();
+
 }
 
 void loop(){
@@ -163,7 +173,7 @@ void loop(){
       distance[i] = sonar[i].ping() * 0.034 / 2;
       prevDistance[i] = distance[i];
 
-      if(i == (SONAR_NUM - 1)){
+      if(i == (SONAR_NUM - 1) && prevCommand == 0 && distance[0] && distance[1]){
 
         error = distance[0] - distance[1];
         errorSum = errorSum + error;
@@ -179,35 +189,75 @@ void loop(){
 
         prevError = error;
 
-
       }
 
+      phi = phi + (0.033 * 0.1625 * (rightMotorSpeed - leftMotorSpeed));
+      dc = ((rightMotorSpeed + leftMotorSpeed) / 2) * 0.023;
+      dy = dy + (0.033 * dc * (1 - cos(phi)));
+
     }
-
-    Serial.print(distance[0]);
-    Serial.print(", ");
-    Serial.print(distance[1]);
-    Serial.print(", ");
-    Serial.print(distance[2]);
-    Serial.println("");
-
-    Serial.print(prevError);
-    Serial.print(", ");
-    Serial.print(error);
-    Serial.print(", ");
-    Serial.print(errorSum);
-    Serial.println("");
-
-    Serial.print(rightMotorSpeed);
-    Serial.print(", ");
-    Serial.print(leftMotorSpeed);
-    Serial.println("");
-
   }
-  
+
+  if (leftStepper.distanceToGo() == 0 && rightStepper.distanceToGo() == 0){
+
+    error = 0;
+    prevError = 0;
+    errorSum = 0;
+
+    rightMotorSpeed = DEFAULT_MOTOR_SPEED;
+    leftMotorSpeed = DEFAULT_MOTOR_SPEED;
+
+    dy = floor(dy);
+
+    positions[0] = rightStepper.currentPosition() + dy;
+    positions[1] = leftStepper.currentPosition() - dy;
+    rightStepper.moveTo(positions[0]);
+    leftStepper.moveTo(positions[1]);
+
+    while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)Serial.println("Hi");
+
+    dy = 0;
+
+    pingSensors();
+    printDistances();
+
+    if (prevCommand == 1)
+      moveForward();
+    else if (distance[1] == 0)
+      turnLeft();
+    else if (distance[2] == 0)
+      moveForward();
+    else if (distance[0] == 0 && distance[1])
+      turnRight();
+    else if (!(distance[0] && distance[1] && distance[2]))
+      moveForward();
+    else
+      aboutFace();
+  }
+
+}
+
+ISR(TIMER2_OVF_vect){
   leftStepper.run();
   rightStepper.run();
+}
 
+void pingSensors(){
+  distance[0] = sonar[0].ping() * 0.034 / 2;
+  delay(33);
+  distance[1] = sonar[1].ping() * 0.034 / 2;
+  delay(33);
+  distance[2] = sonar[2].ping() * 0.034 / 2;
+  delay(33);
+}
+
+void printDistances(){
+  Serial.print(distance[0]);
+  Serial.print("\t");
+  Serial.print(distance[1]);
+  Serial.print("\t");
+  Serial.print(distance[2]);
+  Serial.println("");
 }
 
 void moveForward(){
@@ -215,6 +265,7 @@ void moveForward(){
   positions[1] = leftStepper.currentPosition() - stepsPerUnitLength;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
+  prevCommand = 0;
 }
 
 void turnLeft(){
@@ -222,6 +273,7 @@ void turnLeft(){
   positions[1] = leftStepper.currentPosition() + stepsPerUnitTurn;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
+  prevCommand = 1;
 }
 
 void turnRight(){
@@ -229,6 +281,15 @@ void turnRight(){
   positions[1] = leftStepper.currentPosition() - stepsPerUnitTurn;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
+  prevCommand = 1;
+}
+
+void aboutFace(){
+  positions[0] = rightStepper.currentPosition() + 2 * stepsPerUnitTurn + 4;
+  positions[1] = leftStepper.currentPosition() + 2 * stepsPerUnitTurn + 4;
+  rightStepper.moveTo(positions[0]);
+  leftStepper.moveTo(positions[1]);
+  prevCommand = 1;
 }
 
 float getStepSize(int m2, int m1, int m0){
