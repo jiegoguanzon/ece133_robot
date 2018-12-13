@@ -2,5 +2,6 @@
     "board": "arduino:avr:mega",
     "configuration": "cpu=atmega2560",
     "sketch": "WallFollowing.ino",
-    "port": "COM4"
+    "port": "COM4",
+    "programmer": "AVRISP mkII"
 }

@@ -30,7 +30,7 @@ float stepSize;
 
 long positions[2];
 
-int prevCommand = 0;
+int command = 4;
 float phi = 0;
 float dy = 0;
 float dc = 0;
@@ -39,6 +39,8 @@ typedef struct {
   int dest;
   int cost;
 } edgelist_t;
+
+edgelist_t** adjlist;
 
 void safeFree(void *ptr){
   if(ptr != NULL)
@@ -49,6 +51,22 @@ void checkNullPointer(void *ptr){
   if(ptr == NULL)
     exit(1);
 }
+
+int currXPos = X_START_POS;
+int currYPos = Y_START_POS;
+int currHeading = 1;  // currHeading * 90 deg to get degrees from horizontal
+
+int prevXPos = 0;
+int prevYPos = 0;
+
+int visited[GRID_XY];
+
+int currNode = 0;
+int prevNode = 0;
+
+int weight = 0;
+
+int userInput = 0;
 
 AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
 AccelStepper leftStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
@@ -130,6 +148,19 @@ void setup(){
     pingTimer[i] = pingTimer[i - 1] + PING_INTERVAL;
   }
 
+  pingSensors();
+
+  adjlist = (edgelist_t **) calloc((GRID_XY) + 1, sizeof(edgelist_t *));
+  checkNullPointer(adjlist);
+
+  for(int i = 0; i < GRID_XY; i++){
+    adjlist[i] = (edgelist_t *) calloc(1, sizeof(edgelist_t));
+    checkNullPointer(adjlist[i]);
+    adjlist[i][0].cost = 0;
+    visited[i] = 0;
+  }
+
+
   digitalWrite(RIGHT_SLEEP_PIN, HIGH);    // wake right motor
   digitalWrite(RIGHT_RESET_PIN, HIGH);    // un-reset right motor
 
@@ -139,97 +170,142 @@ void setup(){
   digitalWrite(RIGHT_ENABLE_PIN, LOW);    // enable right motor
   digitalWrite(LEFT_ENABLE_PIN, LOW);     // enable left motor
 
-  pingSensors();
-
 }
 
 void loop(){
 
-  for (int i = 0; i < SONAR_NUM; i++){
+  scapegoat:
 
-    if(millis() >= pingTimer[i]){
+  if(!visited[0]){
 
-      pingTimer[i] = PING_INTERVAL * SONAR_NUM;
+    for (int i = 0; i < SONAR_NUM; i++){
 
-      distance[i] = sonar[i].ping() * 0.034 / 2;
+      if(millis() >= pingTimer[i]){
 
-      if(i == (SONAR_NUM - 1) && prevCommand == 0 && distance[0] && distance[1]){
+        pingTimer[i] = PING_INTERVAL * SONAR_NUM;
 
-        error = distance[0] - distance[1];
-        errorSum = errorSum + error;
+        distance[i] = sonar[i].ping() * 0.034 / 2;
 
-        rightMotorSpeed = DEFAULT_MOTOR_SPEED - ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
-        leftMotorSpeed = DEFAULT_MOTOR_SPEED + ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
+        if(i == (SONAR_NUM - 1) && command == 0 && distance[0] && distance[1]){
 
-        rightMotorSpeed = constrain(rightMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
-        leftMotorSpeed = constrain(leftMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
+          error = distance[0] - distance[1];
+          errorSum = errorSum + error;
 
-        rightStepper.setMaxSpeed(rightMotorSpeed);
-        leftStepper.setMaxSpeed(leftMotorSpeed);
+          rightMotorSpeed = DEFAULT_MOTOR_SPEED - ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
+          leftMotorSpeed = DEFAULT_MOTOR_SPEED + ((P_GAIN * error) + (I_GAIN * errorSum) + (D_GAIN * (error - prevError)));
 
-        prevError = error;
+          rightMotorSpeed = constrain(rightMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
+          leftMotorSpeed = constrain(leftMotorSpeed, MIN_MOTOR_SPEED, MAX_MOTOR_SPEED);
+
+          rightStepper.setMaxSpeed(rightMotorSpeed);
+          leftStepper.setMaxSpeed(leftMotorSpeed);
+
+          prevError = error;
+
+        }
+
+        currentRightMotorSpeed = rightStepper.getCurrentSpeed();
+        currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
+
+        phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
+        dc = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.023;
+        dy = dy + (0.033 * dc * (1 - cos(phi)));
+
+      }
+    }
+
+    if (leftStepper.distanceToGo() == 0 && rightStepper.distanceToGo() == 0){
+
+      prevNode = currNode;
+
+      localize();
+
+      currNode = (4 * currXPos) + currYPos;
+
+      if(!visited[currNode])
+        updateAdjList();
+
+      error = 0;
+      prevError = 0;
+      errorSum = 0;
+
+      rightMotorSpeed = DEFAULT_MOTOR_SPEED;
+      leftMotorSpeed = DEFAULT_MOTOR_SPEED;
+
+      dy = ceil(dy);
+
+      positions[0] = rightStepper.currentPosition() + dy;
+      positions[1] = leftStepper.currentPosition() - dy;
+      rightStepper.moveTo(positions[0]);
+      leftStepper.moveTo(positions[1]);
+
+      while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)
+        Serial.println("Compensating...");
+
+      dy = 0;
+
+      pingSensors();
+      //printDistances();
+
+      if (command)
+        moveForward();
+      else if (distance[1] == 0)
+        turnLeft();
+      else if (distance[2] == 0)
+        moveForward();
+      else if (distance[0] == 0 && distance[1])
+        turnRight();
+      else if (!(distance[0] && distance[1] && distance[2]))
+        moveForward();
+      else
+        aboutFace();
+
+    }
+
+  } else {
+
+    if(Serial.available() > 0){
+
+      userInput = Serial.read();
+
+      if(userInput == 189){
+        printAdjList();
+        goto scapegoat;
+      }
+
+      if((userInput != currNode) &&  (userInput >= 0 && userInput <= GRID_XY)){
 
       }
 
-      currentRightMotorSpeed = rightStepper.getCurrentSpeed();
-      currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
+    }
+  
 
-      phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
-      dc = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.023;
-      dy = dy + (0.033 * dc * (1 - cos(phi)));
+  }
 
-      Serial.print(currentRightMotorSpeed);
-      Serial.print("\t");
-      Serial.print(currentLeftMotorSpeed);
-      Serial.print("\t");
-      Serial.print(phi);
-      Serial.print("\t");
-      Serial.print(dc);
-      Serial.print("\t");
-      Serial.print(dy);
-      Serial.println("");
 
+}
+
+void printAdjList(){
+  for(int i = 0; i < GRID_XY; i++){
+    Serial.println("Node " + i);
+    for(int j = 0; j <= adjlist[i][0].cost; j++){
+      Serial.print("(" + adjlist[i][j].dest);
+      Serial.print(", " + adjlist[i][j].cost);
+      Serial.print(")\t");
     }
   }
+}
 
-  if (leftStepper.distanceToGo() == 0 && rightStepper.distanceToGo() == 0){
+void updateAdjList(){
+  adjlist[currNode] = (edgelist_t *) realloc(adjlist[currNode], (adjlist[currNode][0].cost + 2) * sizeof(edgelist_t));
+  adjlist[prevNode] = (edgelist_t *) realloc(adjlist[prevNode], (adjlist[prevNode][0].cost + 2) * sizeof(edgelist_t));
 
-    error = 0;
-    prevError = 0;
-    errorSum = 0;
+  adjlist[currNode][adjlist[currNode][0].cost + 1].dest = prevNode;
+  adjlist[currNode][adjlist[currNode][0].cost + 1].cost = weight;
+  adjlist[prevNode][adjlist[prevNode][0].cost + 1].dest = currNode;
+  adjlist[prevNode][adjlist[prevNode][0].cost + 1].cost = weight;
 
-    rightMotorSpeed = DEFAULT_MOTOR_SPEED;
-    leftMotorSpeed = DEFAULT_MOTOR_SPEED;
-
-    dy = ceil(dy);
-
-    positions[0] = rightStepper.currentPosition() + dy;
-    positions[1] = leftStepper.currentPosition() - dy;
-    rightStepper.moveTo(positions[0]);
-    leftStepper.moveTo(positions[1]);
-
-    while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)
-      Serial.println("Compensating...");
-
-    dy = 0;
-
-    pingSensors();
-    //printDistances();
-
-    if (prevCommand == 1)
-      moveForward();
-    else if (distance[1] == 0)
-      turnLeft();
-    else if (distance[2] == 0)
-      moveForward();
-    else if (distance[0] == 0 && distance[1])
-      turnRight();
-    else if (!(distance[0] && distance[1] && distance[2]))
-      moveForward();
-    else
-      aboutFace();
-  }
-
+  visited[currNode] = 1;
 }
 
 ISR(TIMER2_OVF_vect){
@@ -260,7 +336,8 @@ void moveForward(){
   positions[1] = leftStepper.currentPosition() - stepsPerUnitLength;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
-  prevCommand = 0;
+  command = 0;
+  weight = 1;
 }
 
 void turnLeft(){
@@ -268,7 +345,8 @@ void turnLeft(){
   positions[1] = leftStepper.currentPosition() + stepsPerUnitTurn;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
-  prevCommand = 1;
+  command = 1;
+  weight = 2;
 }
 
 void turnRight(){
@@ -276,7 +354,8 @@ void turnRight(){
   positions[1] = leftStepper.currentPosition() - stepsPerUnitTurn;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
-  prevCommand = 1;
+  command = 2;
+  weight = 2;
 }
 
 void aboutFace(){
@@ -284,7 +363,50 @@ void aboutFace(){
   positions[1] = leftStepper.currentPosition() + 2 * stepsPerUnitTurn + 4;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
-  prevCommand = 1;
+  command = 3;
+  weight = 2;
+}
+
+void localize(){
+
+  prevXPos = currXPos;
+  prevYPos = currYPos;
+
+  switch (command) {
+    case 0: // moveForward
+      switch(currHeading){
+        case 0:
+          currXPos--;
+          break;
+        case 1:
+          currYPos++;
+          break;
+        case 2:
+          currXPos++;
+          break;
+        case 3:
+          currYPos--;
+          break;
+      }
+      break;
+    case 1: // turnLeft
+      currHeading++;
+      break;
+    case 2: // turnRight
+      currHeading--;
+      break;
+    case 3: // aboutFace
+      currHeading += 2;
+      break;
+  }
+
+  if(currHeading == -1)
+    currHeading = 3;
+  else if(currHeading == 4)
+    currHeading = 0;
+  else if(currHeading == 5)
+    currHeading = 1;
+
 }
 
 float getStepSize(int m2, int m1, int m0){
