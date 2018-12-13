@@ -1,0 +1,2 @@
+const int BASE_FORWARD_STEPS = 285;
+const int BASE_TURN_STEPS = 125;

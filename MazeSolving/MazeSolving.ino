@@ -1,57 +1,26 @@
 #include <math.h>
 #include <NewPing.h>
-#include <AccelStepper.h>
-#include <MultiStepper.h>
+#include <AccelStepperJigs.h>
 #include "pinDefs.h"
-
-const int SONAR_NUM = 3;
-const int MAX_SENSING_DISTANCE = 10;
-const int PING_INTERVAL = 33;
-
-const int WHEEL_DIAMETER = 65;
-const int ROBOT_DIAMETER = 200;
-const int UNIT_LENGTH = 200;
-
-const int DEFAULT_MOTOR_SPEED = 500;
-const int MIN_MOTOR_SPEED = 300;
-const int MAX_MOTOR_SPEED = 700;
-
-const int STEPS_PER_ROTATION = 200;
-
-const long SENSOR_PULSE_INTERVAL = 100000;
-
-const float P_GAIN = 3;
-const float I_GAIN = 1;
-const float D_GAIN = 2;
+#include "robotConstants.h"
+#include "mazeConstants.h"
 
 int m2 = 0;
 int m1 = 0;
 int m0 = 0;
 
-unsigned long prevRightMicros;
-unsigned long currRightMicros;
-unsigned long prevLeftMicros;
-unsigned long currLeftMicros;
-
-unsigned long prevPulseMicros;
-unsigned long currPulseMicros;
-
-unsigned long rightMotorStepInterval;
-unsigned long leftMotorStepInterval;
-
 int rightMotorSpeed;
 int leftMotorSpeed;
 
-int distanceToWall;
+int currentRightMotorSpeed;
+int currentLeftMotorSpeed;
 
-int distancePerStep;
 int stepsPerUnitLength;
 int stepsPerUnitTurn;
 
 unsigned long pingTimer[SONAR_NUM];
 
 float distance[SONAR_NUM];
-float prevDistance[SONAR_NUM];
 
 float error;
 float prevError;
@@ -59,15 +28,27 @@ float errorSum;
 
 float stepSize;
 
-const int BASE_FORWARD_STEPS = 285;
-const int BASE_TURN_STEPS = 125;
-
 long positions[2];
 
 int prevCommand = 0;
 float phi = 0;
-int dy = 0;
-int dc = 0;
+float dy = 0;
+float dc = 0;
+
+typedef struct {
+  int dest;
+  int cost;
+} edgelist_t;
+
+void safeFree(void *ptr){
+  if(ptr != NULL)
+    free(ptr);
+}
+
+void checkNullPointer(void *ptr){
+  if(ptr == NULL)
+    exit(1);
+}
 
 AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
 AccelStepper leftStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
@@ -171,7 +152,6 @@ void loop(){
       pingTimer[i] = PING_INTERVAL * SONAR_NUM;
 
       distance[i] = sonar[i].ping() * 0.034 / 2;
-      prevDistance[i] = distance[i];
 
       if(i == (SONAR_NUM - 1) && prevCommand == 0 && distance[0] && distance[1]){
 
@@ -191,9 +171,23 @@ void loop(){
 
       }
 
-      phi = phi + (0.033 * 0.1625 * (rightMotorSpeed - leftMotorSpeed));
-      dc = ((rightMotorSpeed + leftMotorSpeed) / 2) * 0.023;
+      currentRightMotorSpeed = rightStepper.getCurrentSpeed();
+      currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
+
+      phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
+      dc = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.023;
       dy = dy + (0.033 * dc * (1 - cos(phi)));
+
+      Serial.print(currentRightMotorSpeed);
+      Serial.print("\t");
+      Serial.print(currentLeftMotorSpeed);
+      Serial.print("\t");
+      Serial.print(phi);
+      Serial.print("\t");
+      Serial.print(dc);
+      Serial.print("\t");
+      Serial.print(dy);
+      Serial.println("");
 
     }
   }
@@ -207,19 +201,20 @@ void loop(){
     rightMotorSpeed = DEFAULT_MOTOR_SPEED;
     leftMotorSpeed = DEFAULT_MOTOR_SPEED;
 
-    dy = floor(dy);
+    dy = ceil(dy);
 
     positions[0] = rightStepper.currentPosition() + dy;
     positions[1] = leftStepper.currentPosition() - dy;
     rightStepper.moveTo(positions[0]);
     leftStepper.moveTo(positions[1]);
 
-    while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)Serial.println("Hi");
+    while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)
+      Serial.println("Compensating...");
 
     dy = 0;
 
     pingSensors();
-    printDistances();
+    //printDistances();
 
     if (prevCommand == 1)
       moveForward();
