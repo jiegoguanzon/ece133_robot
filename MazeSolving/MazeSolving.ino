@@ -5,6 +5,8 @@
 #include "robotConstants.h"
 #include "mazeConstants.h"
 
+const int INF = 9999;
+
 int m2 = 0;
 int m1 = 0;
 int m0 = 0;
@@ -41,6 +43,7 @@ typedef struct {
 } edgelist_t;
 
 edgelist_t** adjlist;
+edgelist_t* shortestPath;
 
 void safeFree(void *ptr){
   if(ptr != NULL)
@@ -60,13 +63,20 @@ int prevXPos = 0;
 int prevYPos = 0;
 
 int visited[GRID_XY];
+int mapped[GRID_XY];
+int pathCost[GRID_XY];
+int pathPred[GRID_XY];
 
 int currNode = 0;
 int prevNode = 0;
 
 int weight = 0;
 
-int userInput = 0;
+String userInput = "";
+
+int input = 0;
+
+int shortestPathNodeCount;
 
 AccelStepper rightStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
 AccelStepper leftStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
@@ -157,9 +167,8 @@ void setup(){
     adjlist[i] = (edgelist_t *) calloc(1, sizeof(edgelist_t));
     checkNullPointer(adjlist[i]);
     adjlist[i][0].cost = 0;
-    visited[i] = 0;
+    mapped[i] = 0;
   }
-
 
   digitalWrite(RIGHT_SLEEP_PIN, HIGH);    // wake right motor
   digitalWrite(RIGHT_RESET_PIN, HIGH);    // un-reset right motor
@@ -170,13 +179,13 @@ void setup(){
   digitalWrite(RIGHT_ENABLE_PIN, LOW);    // enable right motor
   digitalWrite(LEFT_ENABLE_PIN, LOW);     // enable left motor
 
+  //moveDecision();
+
 }
 
 void loop(){
 
-  scapegoat:
-
-  if(!visited[0]){
+  if(!mapped[0]){
 
     for (int i = 0; i < SONAR_NUM; i++){
 
@@ -187,6 +196,7 @@ void loop(){
         distance[i] = sonar[i].ping() * 0.034 / 2;
 
         if(i == (SONAR_NUM - 1) && command == 0 && distance[0] && distance[1]){
+        //if(command == 0 && distance[0] && distance[1]){
 
           error = distance[0] - distance[1];
           errorSum = errorSum + error;
@@ -202,28 +212,19 @@ void loop(){
 
           prevError = error;
 
+          currentRightMotorSpeed = rightStepper.getCurrentSpeed();
+          currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
+
+          phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
+          dc = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.033;
+          dy = dy + (0.035 * dc * (1 - cos(phi)));
+
         }
-
-        currentRightMotorSpeed = rightStepper.getCurrentSpeed();
-        currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
-
-        phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
-        dc = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.023;
-        dy = dy + (0.033 * dc * (1 - cos(phi)));
 
       }
     }
 
     if (leftStepper.distanceToGo() == 0 && rightStepper.distanceToGo() == 0){
-
-      prevNode = currNode;
-
-      localize();
-
-      currNode = (4 * currXPos) + currYPos;
-
-      if(!visited[currNode])
-        updateAdjList();
 
       error = 0;
       prevError = 0;
@@ -232,80 +233,276 @@ void loop(){
       rightMotorSpeed = DEFAULT_MOTOR_SPEED;
       leftMotorSpeed = DEFAULT_MOTOR_SPEED;
 
-      dy = ceil(dy);
+      rightStepper.setMaxSpeed(DEFAULT_MOTOR_SPEED);
+      leftStepper.setMaxSpeed(DEFAULT_MOTOR_SPEED);
 
-      positions[0] = rightStepper.currentPosition() + dy;
-      positions[1] = leftStepper.currentPosition() - dy;
-      rightStepper.moveTo(positions[0]);
-      leftStepper.moveTo(positions[1]);
+      if(command == 0){
+        dy = ceil(dy);
 
-      while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0)
-        Serial.println("Compensating...");
+        positions[0] = rightStepper.currentPosition() + (int) dy;
+        positions[1] = leftStepper.currentPosition() - (int) dy;
+        rightStepper.moveTo(positions[0]);
+        leftStepper.moveTo(positions[1]);
+
+        while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0){
+          Serial.println("Compensating...");
+        }
+      }
 
       dy = 0;
 
       pingSensors();
+
+      if(distance[2])
+        wallCompensate();
+
       //printDistances();
 
-      if (command)
-        moveForward();
-      else if (distance[1] == 0)
-        turnLeft();
-      else if (distance[2] == 0)
-        moveForward();
-      else if (distance[0] == 0 && distance[1])
-        turnRight();
-      else if (!(distance[0] && distance[1] && distance[2]))
-        moveForward();
-      else
-        aboutFace();
+      moveDecision();
+
+      prevNode = currNode;
+
+      localize();
+
+      if(!mapped[currNode])
+        updateAdjList();
+
+      Serial.println("Done updating adjacency list.");
 
     }
 
   } else {
 
-    if(Serial.available() > 0){
+    Serial.println("Maze mapped.");
 
-      userInput = Serial.read();
-
-      if(userInput == 189){
-        printAdjList();
-        goto scapegoat;
-      }
-
-      if((userInput != currNode) &&  (userInput >= 0 && userInput <= GRID_XY)){
-
-      }
+    while(!Serial.available()){
 
     }
-  
+
+    userInput = Serial.readString();
+
+    input = userInput.toInt();
+
+    Serial.println(input);
+
+    if(input == 189){
+      printAdjList();
+    } else if (input == 188){
+      printMappedList();
+    } else if ((input != currNode) &&  (input >= 0 && input <= GRID_XY)){
+      dijsktra(currNode, input);
+      printShortestPath();
+      shortestPathTraversal();
+    }
 
   }
 
+}
+
+void wallCompensate(){
+  float error = distance[2] - 4;
+  int errorInSteps;
+  if(error < 0){
+    errorInSteps = floor(abs(error * 9.79));
+    positions[0] = rightStepper.currentPosition() - errorInSteps;
+    positions[1] = leftStepper.currentPosition() + errorInSteps;
+    rightStepper.moveTo(positions[0]);
+    leftStepper.moveTo(positions[1]);
+  }
+  else{
+    errorInSteps = ceil(abs(error * 9.79));
+    positions[0] = rightStepper.currentPosition() + errorInSteps;
+    positions[1] = leftStepper.currentPosition() - errorInSteps;
+    rightStepper.moveTo(positions[0]);
+    leftStepper.moveTo(positions[1]);
+  }
+  while(rightStepper.distanceToGo() != 0 || leftStepper.distanceToGo() != 0){
+    Serial.println("Compensating...");
+  }
+}
+
+void shortestPathTraversal(){
+
+  int deltaNode = 0;
+  int deltaHeading = 0;
+  int absHeading = 0;
+
+  for(int i = 0; i < shortestPathNodeCount; i++){
+    deltaNode = currNode - shortestPath[i].dest;
+    switch(deltaNode){
+      case -4:
+        absHeading = 2;
+        break;
+      case -1:
+        absHeading = 1;
+        break;
+      case 1:
+        absHeading = -1;
+        break;
+      case 4:
+        absHeading = 0;
+        break;
+    }
+    deltaHeading = currHeading - absHeading;
+    switch(deltaHeading){
+      case -1:
+      case 3:
+        turnLeft();
+        break;
+      case 1:
+      case -3:
+        turnRight();
+        break;
+      case 2:
+      case -2:
+        aboutFace();
+        break;
+    }
+    currHeading = absHeading;
+    while(rightStepper.distanceToGo() || leftStepper.distanceToGo()){
+
+    }
+    moveForward();
+    localize();
+    while(rightStepper.distanceToGo() || leftStepper.distanceToGo()){
+
+    }
+  }
 
 }
 
+void printMappedList(){
+  for(int i = 0; i < GRID_XY; i++)
+    Serial.print(mapped[i]);
+  Serial.println("");
+}
+
+void moveDecision(){
+  if (command != 0)
+    moveForward();
+  else if (distance[1] == 0)
+    turnLeft();
+  else if (distance[2] == 0)
+    moveForward();
+  else if (distance[0] == 0 && distance[1])
+    turnRight();
+  else if (!(distance[0] && distance[1] && distance[2]))
+    moveForward();
+  else
+    aboutFace();
+}
+
+void dijsktra(int src, int dest){
+
+  Serial.println("About to do Dijsktra's Algorithm...");
+
+  int currentNode = src;
+  shortestPathNodeCount = 1;
+
+  Serial.println("Initializing arrays...");
+
+  for(int i = 0; i < GRID_XY; i++){   // initialize visited, path cost, and path predecessor lists
+    visited[i] = 0;
+    pathCost[i] = INF;                  //  path weight
+    pathPred[i] = INF;                    //  predecessor
+  }
+
+  Serial.println("Setting source node parameters...");
+
+  visited[src] = 1;                   // set starting node as visited
+  pathCost[src] = 0;                    // set starting node cost to zero
+  pathPred[src] = src;                    // set starting node predecessor to itself
+
+  Serial.println("Traversing adjacency list...");
+
+  while(currentNode != dest){
+
+    Serial.println("Getting node with least cost...");
+
+    for(int i = 0; i < GRID_XY; i++){
+      if((pathCost[i] < pathCost[currentNode]) && (!visited[i]) && mapped[i])
+        currentNode = i;
+    }
+
+    Serial.println("Setting current node as visited...");
+
+    visited[currentNode] = 1;
+
+    Serial.println("Calculating new costs...");
+  
+    for(int j = 1; j <= adjlist[currentNode][0].cost; j++){
+      if(!visited[adjlist[currentNode][j].dest] && mapped[adjlist[currentNode][j].dest]){
+        if(pathCost[adjlist[currentNode][j].dest] > (pathCost[currentNode] + adjlist[currentNode][j].cost)){
+          pathCost[adjlist[currentNode][j].dest] = pathCost[currentNode] + adjlist[currentNode][j].cost;
+          pathPred[adjlist[currentNode][j].dest] = currentNode;
+        }
+      }
+    }
+
+  }
+
+  Serial.println("Getting shortest path node count...");
+
+  for(; 1; shortestPathNodeCount++){
+    if(currentNode == src)
+      break;
+    currentNode = pathPred[currentNode];
+  }
+
+  shortestPath = (edgelist_t *) calloc(1, shortestPathNodeCount * sizeof(edgelist_t));
+
+  Serial.println("Getting shortest path list...");
+
+  for(int i = shortestPathNodeCount, j = dest; i >= 0; i--){
+    shortestPath[i].dest = j;
+    j = pathPred[j];
+  }
+
+}
+
+void printShortestPath(){
+  Serial.println("Printing shortest path...");
+  for(int i = 1; i <= shortestPathNodeCount; i++){
+    Serial.print(shortestPath[i].dest + "\t");
+  }
+}
+
 void printAdjList(){
+  Serial.println("Printing adjacency list...");
   for(int i = 0; i < GRID_XY; i++){
-    Serial.println("Node " + i);
-    for(int j = 0; j <= adjlist[i][0].cost; j++){
-      Serial.print("(" + adjlist[i][j].dest);
-      Serial.print(", " + adjlist[i][j].cost);
+    Serial.print("\nNode ");
+    Serial.print(i);
+    Serial.print(":\n");
+    for(int j = 1; j <= adjlist[i][0].cost; j++){
+      Serial.print("(");
+      Serial.print(adjlist[i][j].dest);
+      Serial.print(", ");
+      Serial.print(adjlist[i][j].cost);
       Serial.print(")\t");
     }
   }
 }
 
 void updateAdjList(){
+
+  Serial.println("Updating adjacency list...");
+
   adjlist[currNode] = (edgelist_t *) realloc(adjlist[currNode], (adjlist[currNode][0].cost + 2) * sizeof(edgelist_t));
   adjlist[prevNode] = (edgelist_t *) realloc(adjlist[prevNode], (adjlist[prevNode][0].cost + 2) * sizeof(edgelist_t));
+
+  Serial.println("Done reallocating.");
 
   adjlist[currNode][adjlist[currNode][0].cost + 1].dest = prevNode;
   adjlist[currNode][adjlist[currNode][0].cost + 1].cost = weight;
   adjlist[prevNode][adjlist[prevNode][0].cost + 1].dest = currNode;
   adjlist[prevNode][adjlist[prevNode][0].cost + 1].cost = weight;
 
-  visited[currNode] = 1;
+  adjlist[currNode][0].cost++;
+  adjlist[prevNode][0].cost++;
+
+  Serial.println(currNode);
+
+  mapped[currNode] = 1;
 }
 
 ISR(TIMER2_OVF_vect){
@@ -332,6 +529,7 @@ void printDistances(){
 }
 
 void moveForward(){
+  Serial.println("Moving forward...");
   positions[0] = rightStepper.currentPosition() + stepsPerUnitLength;
   positions[1] = leftStepper.currentPosition() - stepsPerUnitLength;
   rightStepper.moveTo(positions[0]);
@@ -341,6 +539,7 @@ void moveForward(){
 }
 
 void turnLeft(){
+  Serial.println("Turning left...");
   positions[0] = rightStepper.currentPosition() + stepsPerUnitTurn;
   positions[1] = leftStepper.currentPosition() + stepsPerUnitTurn;
   rightStepper.moveTo(positions[0]);
@@ -350,8 +549,9 @@ void turnLeft(){
 }
 
 void turnRight(){
-  positions[0] = rightStepper.currentPosition() - stepsPerUnitTurn;
-  positions[1] = leftStepper.currentPosition() - stepsPerUnitTurn;
+  Serial.println("Turning right...");
+  positions[0] = rightStepper.currentPosition() - stepsPerUnitTurn + 2;
+  positions[1] = leftStepper.currentPosition() - stepsPerUnitTurn - 2;
   rightStepper.moveTo(positions[0]);
   leftStepper.moveTo(positions[1]);
   command = 2;
@@ -359,6 +559,7 @@ void turnRight(){
 }
 
 void aboutFace(){
+  Serial.println("About facing...");
   positions[0] = rightStepper.currentPosition() + 2 * stepsPerUnitTurn + 4;
   positions[1] = leftStepper.currentPosition() + 2 * stepsPerUnitTurn + 4;
   rightStepper.moveTo(positions[0]);
@@ -369,8 +570,26 @@ void aboutFace(){
 
 void localize(){
 
+  Serial.println("Localizing...");
+
   prevXPos = currXPos;
   prevYPos = currYPos;
+
+    Serial.print("Command: ");
+    Serial.print(command);
+    Serial.print("\t");
+    Serial.print("CurrX: ");
+    Serial.print(currXPos);
+    Serial.print("\t");
+    Serial.print("CurrY: ");
+    Serial.print(currYPos);
+    Serial.print("\t");
+    Serial.print("CurrHeading: ");
+    Serial.print(currHeading);
+    Serial.print("\t");
+    Serial.print("CurrNode: ");
+    Serial.print(currNode);
+    Serial.println("");
 
   switch (command) {
     case 0: // moveForward
@@ -406,6 +625,9 @@ void localize(){
     currHeading = 0;
   else if(currHeading == 5)
     currHeading = 1;
+
+
+  currNode = (GRID_Y * currXPos) + currYPos;
 
 }
 
