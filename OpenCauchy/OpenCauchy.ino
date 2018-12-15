@@ -21,7 +21,13 @@ int pathPred[GRID_XY];
 int visited[GRID_XY];
 int mapped[GRID_XY];
 
+int arrayXOffset;
+int arrayYOffset;
+
 int wallErrorInSteps;
+
+int command;
+int weight;
 
 bool pidIsOn = false;
 
@@ -54,6 +60,13 @@ void setup() {
   stepSize = getStepSize(M2, M1, M0);
   stepsPerUnitLength = getUnitLengthSteps(stepSize);
   stepsPerUnitTurn = getUnitTurnSteps(stepSize);
+
+  startXPos = startYPos = startNode = 0;
+  currXPos = currYPos = currNode = 0;
+  prevXPos = prevYPos = prevNode = 0;
+  startHeading = currHeading = prevHeading = 1;
+
+  arrayXOffset = arrayYOffset = 0;
 
   adjlist = (edgelist_t **) calloc(GRID_XY + 1, sizeof(edgelist_t *));
   checkNullPointer(adjlist);
@@ -127,6 +140,10 @@ void loop() {
       waitForMotors();
 
       moveDecision();
+      
+      localize();
+      if (!mapped[currNode])
+        updateAdjList();
 
     }
 
@@ -135,8 +152,81 @@ void loop() {
 
 }
 
-void moveDecision() {
+void localize() {
+  prevNode = currNode;
 
+  switch (command) {
+    case 0:
+      switch(currHeading){
+        case 0:
+          currXPos++;
+          break;
+        case 1:
+          currYPos--;
+          break;
+        case 2:
+          currXPos--
+          break;
+        case 3:
+          currYPos++
+          break;
+      }
+      break;
+    case 1:
+      currHeading++;
+      break;
+    case 2:
+      currHeading--;
+      break;
+    case 3:
+      currHeading += 2;
+      break;
+  }
+
+  if(currHeading == -1)
+    currHeading = 3;
+  else if(currHeading == 4)
+    currHeading = 0;
+  else if(currHeading == 5)
+    currHeading = 1;
+
+  if (currXPos == -1)
+    arrayXOffset++;
+  if (currYPos == -1)
+    arrayYOffset++;
+
+  adjustArray();
+
+  currXPos += arrayXOffset;
+  currYPos += arrayYOffset;
+
+  startXPos += arrayXOffset;
+  startYPos += arrayYOffset;
+
+  currNode = (GRID_Y * currXPos) + currYPos;
+}
+
+void adjustArray() {
+
+}
+
+void updateAdjList() {
+
+}
+
+void moveDecision() {
+  if (pidIsOn)
+    moveForward(1);
+  else if (!distance[1])
+    faceLeft(1);
+  else if (!distance[2])
+    moveForward(1);
+  else if (!distance[0])
+    faceRight(1);
+  else if (!(distance[0] && distance[1] && distance[2]))
+    moveForward(1);
+  else
+    faceLeft(2);
 }
 
 void waitForMotors() {
@@ -160,10 +250,6 @@ void getLostSteps() {
   phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
   centerDistance = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.033;
   lostSteps = lostSteps + (0.033 * centerDistance * (1 - cos(phi)));
-}
-
-void compensate() {
-
 }
 
 void getError() {
@@ -221,6 +307,8 @@ void moveForward(int counts) {
   pidIsOn = true;
   rightStepper.move(counts * stepsPerUnitLength);
   leftStepper.move(-counts * stepsPerUnitLength);
+  command = 0;
+  weight = 1;
 }
 
 void faceLeft(int counts) {
@@ -228,6 +316,8 @@ void faceLeft(int counts) {
   pidIsOn = false;
   rightStepper.move(counts * stepsPerUnitTurn);
   leftStepper.move(counts * stepsPerUnitTurn);
+  command = (2 * counts) - 1;
+  weight = counts + 1;
 }
 
 void faceRight(int counts) {
@@ -235,6 +325,8 @@ void faceRight(int counts) {
   pidIsOn = false;
   rightStepper.move(-counts * stepsPerUnitTurn);
   leftStepper.move(-counts * stepsPerUnitTurn);
+  command = 2;
+  weight = 2;
 }
 
 void initializePins() {

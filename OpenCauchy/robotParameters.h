@@ -34,18 +34,17 @@ int stepsPerUnitTurn;
 
 int currXPos;
 int currYPos;
-int currHead;
+int currHeading;
 int currNode;
 
 int prevXPos;
 int prevYPos;
 int prevNode;
+int prevHeading;
 
 int startXPos;
 int startYPos;
+int startHeading;
 int startNode;
-
-int rightMotorPos;
-int leftMotorPos;
 
 float stepSize;
