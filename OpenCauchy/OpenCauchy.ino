@@ -4,6 +4,9 @@
 #include "pinDefs.h"
 #include "robotParameters.h"
 #include "mazeParameters.h"
+#include "hardCodedMaze.h"
+
+const int INF = 9999;
 
 unsigned long pingTimer[SONAR_NUM];
 float distance[SONAR_NUM];
@@ -30,8 +33,12 @@ int phiErrorInSteps;
 int command;
 int weight;
 
+int startNodePathCount;
+int shortestPathNodeCount;
+
 bool pidIsOn = false;
 bool isMapping = false;
+bool mazeIsMapped = false;
 
 float error;
 float errorSum;
@@ -92,14 +99,14 @@ void setup() {
   }
 
   resetErrors();
-  pingAllSensors();
   enableSteppers();
+  startSequence();
 
 }
-
+int count = 0;
 void loop() {
 
-  if (!(mapped[startNode] && (currNode == startNode) && (currHeading == startHeading))) {
+  if (!(mapped[startNode] && (currNode == startNode) && (currHeading == startHeading)) && startNodePathCount) {
 
     for (int i = 0; i < SONAR_NUM; i++){
       if(millis() >= pingTimer[i]){
@@ -150,15 +157,24 @@ void loop() {
       wallErrorInSteps = 0;
       phiErrorInSteps = 0;
 
+      distance[0] = distances[count][0];
+      distance[1] = distances[count][1];
+      distance[2] = distances[count][2];
+
       moveDecision();
+      count++;
       
       localize();
+
+      if(currNode == startNode && !command)
+        startNodePathCount--;
+      Serial.println(startNodePathCount);
 
       if(!command)
         isMapping = true;
 
-      if (!mapped[currNode] && isMapping && !command)
       //if (!mapped[currNode])
+      if (!mapped[currNode] && isMapping && !command)
         updateAdjList();
       
       arrayXOffset = 0;
@@ -167,7 +183,122 @@ void loop() {
     }
 
   } else {
-    Serial.println("Maze mapped.");
+    if (!mazeIsMapped) {
+      waitForMotors();
+
+      Serial.println("Maze mapped.");
+
+      mapped[startNode] = 1;
+      mazeIsMapped = true;
+
+      matchHeading(startHeading);
+
+      printMappedList();
+      printAdjList();
+
+      dijkstras(currNode, TARGET_NODE);
+      shortestPathTraversal();
+    }
+  }
+
+}
+
+void dijkstras(int src, int dest) {
+  int currentNode = src;
+  int prevNode = src;
+  int leastCost = INF;
+
+  Serial.println("Initializing arrays...");
+  for (int i = 0; i < GRID_XY; i++) {
+    visited[i] = 0;
+    pathCost[i] = INF;
+    pathPred[i] = INF;
+  }
+  Serial.println("Done.");
+
+  Serial.println("Setting starting parameters...");
+  visited[src] = 1;
+  pathCost[src] = 0;
+  pathPred[src] = src;
+  Serial.println("Done.");
+
+  Serial.println("Traversing adjacency list...");
+  while (currentNode != dest) {
+
+    Serial.println("Getting node with least cost...");
+    for (int i = 0; i < GRID_XY; i++) {
+      if (!visited[i])
+        continue;
+      
+      for (int j = 1; j <= adjlist[i][0].cost; j++) {
+        if (visited[adjlist[i][j].dest])
+          continue;
+        
+        if (adjlist[i][j].cost < leastCost) {
+          currentNode = adjlist[i][j].dest;
+          leastCost = adjlist[i][j].cost;
+          pathCost[currentNode] = leastCost;
+          pathPred[adjlist[i][j].dest] = i;
+
+          Serial.println(currentNode);
+          Serial.println(leastCost);
+        }
+      }
+    }
+    Serial.println("Done.");
+
+    Serial.println("Setting current node as visited...");
+    visited[currentNode] = 1;
+    leastCost = INF;
+    Serial.println("Done.");
+
+  }
+  Serial.println("Done.");
+
+  for (int i = dest;;) {
+    shortestPathNodeCount++;
+    //Serial.println(i);
+    if (i == src)
+      break;
+    i = pathPred[i];
+  }
+}
+
+void shortestPathTraversal(){
+
+  int deltaNode = 0;
+  int deltaHeading = 0;
+  int absHeading = 0;
+  int forwardCounter = 0;
+
+  int shortestPath[shortestPathNodeCount];
+  int nodePath = TARGET_NODE;
+
+  for (int i = shortestPathNodeCount - 1; i >= 0; i--){
+    shortestPath[i] = nodePath;
+    nodePath = pathPred[nodePath];
+  } 
+
+  for (int i = 1; i < shortestPathNodeCount; i++) {
+    deltaNode = shortestPath[i] - currNode;
+    switch (deltaNode) {
+      case 4:
+        absHeading = 0;
+        break;
+      case -1:
+        absHeading = 1;
+        break;
+      case -4:
+        absHeading = 2;
+        break;
+      case 1:
+        absHeading = 3;
+        break;
+    }
+    matchHeading(absHeading);
+    moveForward(1);
+    currNode = shortestPath[i];
+    waitForMotors();
   }
 
 }
@@ -236,6 +367,7 @@ void localize() {
   prevNode = (GRID_Y * prevXPos) + prevYPos;
   startNode = (GRID_Y * startXPos) + startYPos;
 
+  /*
   Serial.print("\ncurrNode: ");
   Serial.print(currNode);
   Serial.print("\tprevNode: ");
@@ -253,6 +385,7 @@ void localize() {
   Serial.print("\tarrayYOffset: ");
   Serial.print(arrayYOffset);
   Serial.println("");
+  */
 
   adjustAdjList();
 
@@ -302,7 +435,19 @@ void adjustAdjList() {
 }
 
 void updateAdjList() {
+  int willUpdate = 1;
 
+  for (int i = 1; i <= adjlist[currNode][0].cost; i++){
+    if (adjlist[currNode][i].dest == prevNode)
+      willUpdate = 0;
+  }
+
+  for (int i = 1; i <= adjlist[prevNode][0].cost; i++){
+    if (adjlist[prevNode][i].dest == currNode)
+      willUpdate = 0;
+  }
+
+  if (willUpdate) {
   adjlist[currNode] = (edgelist_t *) realloc(adjlist[currNode], (adjlist[currNode][0].cost + 2) * sizeof(edgelist_t));
   adjlist[prevNode] = (edgelist_t *) realloc(adjlist[prevNode], (adjlist[prevNode][0].cost + 2) * sizeof(edgelist_t));
 
@@ -313,6 +458,7 @@ void updateAdjList() {
 
   adjlist[currNode][0].cost++;
   adjlist[prevNode][0].cost++;
+  }
 
   //printAdjList();
 
@@ -353,9 +499,34 @@ void moveDecision() {
     faceLeft(2);
 }
 
+void matchHeading(int targetHeading) {
+  int deltaHeading = currHeading - targetHeading;
+  switch(deltaHeading){
+      case -1:
+      case 3:
+        faceLeft(1);
+        break;
+      case 1:
+      case -3:
+        faceRight(1);
+        break;
+      case 2:
+      case -2:
+        faceLeft(2);
+        break;
+    }
+  currHeading = targetHeading;
+  waitForMotors();
+}
+
 void waitForMotors() {
+  int imblue = 1;
   while(rightStepper.distanceToGo() || leftStepper.distanceToGo()){
-    Serial.println("Compensating...");
+    if (imblue){
+      imblue = 0;
+      Serial.println("I'm Blue - da ba dee da ba dye, da ba dee da ba dye");
+    }
+    Serial.println("Da ba dee da ba dye, da ba dee da ba dye");
   }
 }
 
@@ -511,6 +682,27 @@ void setStepSize(){
   digitalWrite(LEFT_M2_PIN, M2);
   digitalWrite(LEFT_M1_PIN, M1);
   digitalWrite(LEFT_M0_PIN, M0);
+}
+
+void startSequence() {
+  pingAllSensors();
+  if(!distance[0])
+    startNodePathCount++;
+  if(!distance[1])
+    startNodePathCount++;
+  if(!distance[2])
+    startNodePathCount++;
+  faceLeft(2);
+  waitForMotors();
+  pingAllSensors();
+  if(!distance[2])
+    startNodePathCount++;
+  if(startNodePathCount == 0);
+    startNodePathCount = 1;
+  faceLeft(2);
+  waitForMotors();
+  command = 0;
+  pidIsOn = false;
 }
 
 float getStepSize(int m2, int m1, int m0){

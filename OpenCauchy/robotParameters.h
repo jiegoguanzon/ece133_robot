@@ -7,7 +7,7 @@ const int ROBOT_DIAMETER = 200;
 const int UNIT_LENGTH = 200;
 
 const int DEFAULT_MOTOR_SPEED = 500;
-const int DEFAULT_ACCELERATION = 1000;
+const int DEFAULT_ACCELERATION = 3000;
 const int MIN_MOTOR_SPEED = 300;
 const int MAX_MOTOR_SPEED = 700;
 
