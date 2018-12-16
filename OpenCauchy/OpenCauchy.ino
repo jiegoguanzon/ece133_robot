@@ -25,11 +25,13 @@ int arrayXOffset;
 int arrayYOffset;
 
 int wallErrorInSteps;
+int phiErrorInSteps;
 
 int command;
 int weight;
 
 bool pidIsOn = false;
+bool isMapping = false;
 
 float error;
 float errorSum;
@@ -97,7 +99,7 @@ void setup() {
 
 void loop() {
 
-  if (!mapped[0]) {
+  if (!(mapped[startNode] && (currNode == startNode) && (currHeading == startHeading))) {
 
     for (int i = 0; i < SONAR_NUM; i++){
       if(millis() >= pingTimer[i]){
@@ -119,14 +121,18 @@ void loop() {
       }
     }
 
-    if (!rightStepper.isRunning() || !leftStepper.isRunning()) {
+    if (!rightStepper.distanceToGo() || !leftStepper.distanceToGo()) {
       resetErrors();
       resetMotorSpeeds();
 
-      if (pidIsOn)
+      if (pidIsOn){
         lostSteps = ceil(lostSteps);
-      else
+        phiErrorInSteps = ceil(phi) * 3.14 / 100;
+      }
+      else {
         lostSteps = 0;
+        phiErrorInSteps = 0;
+      }
 
       pingAllSensors();
 
@@ -135,24 +141,44 @@ void loop() {
       else
         wallErrorInSteps = 0;
       
-      rightStepper.move(lostSteps - wallErrorInSteps);
-      leftStepper.move(-lostSteps + wallErrorInSteps);
+      rightStepper.move(lostSteps - wallErrorInSteps - phiErrorInSteps);
+      leftStepper.move(-lostSteps + wallErrorInSteps - phiErrorInSteps);
       waitForMotors();
+
+      phi = 0;
+      lostSteps = 0;
+      wallErrorInSteps = 0;
+      phiErrorInSteps = 0;
 
       moveDecision();
       
       localize();
-      if (!mapped[currNode])
+
+      if(!command)
+        isMapping = true;
+
+      if (!mapped[currNode] && isMapping && !command)
+      //if (!mapped[currNode])
         updateAdjList();
+      
+      arrayXOffset = 0;
+      arrayYOffset = 0;
 
     }
 
   } else {
+    Serial.println("Maze mapped.");
   }
 
 }
 
 void localize() {
+
+  if(isMapping && !command)
+    mapped[currNode] = 1;
+
+  prevXPos = currXPos;
+  prevYPos = currYPos;
   prevNode = currNode;
 
   switch (command) {
@@ -165,10 +191,10 @@ void localize() {
           currYPos--;
           break;
         case 2:
-          currXPos--
+          currXPos--;
           break;
         case 3:
-          currYPos++
+          currYPos++;
           break;
       }
       break;
@@ -195,27 +221,125 @@ void localize() {
   if (currYPos == -1)
     arrayYOffset++;
 
-  adjustArray();
+  adjustMappedList();
 
   currXPos += arrayXOffset;
   currYPos += arrayYOffset;
+
+  prevXPos += arrayXOffset;
+  prevYPos += arrayYOffset;
 
   startXPos += arrayXOffset;
   startYPos += arrayYOffset;
 
   currNode = (GRID_Y * currXPos) + currYPos;
+  prevNode = (GRID_Y * prevXPos) + prevYPos;
+  startNode = (GRID_Y * startXPos) + startYPos;
+
+  Serial.print("\ncurrNode: ");
+  Serial.print(currNode);
+  Serial.print("\tprevNode: ");
+  Serial.print(prevNode);
+  Serial.print("\tstartNode: ");
+  Serial.print(startNode);
+  Serial.print("\tcurrHeading: ");
+  Serial.print(currHeading);
+  Serial.print("\tstartHeading: ");
+  Serial.print(startHeading);
+  Serial.print("\tmapped[startNode]: ");
+  Serial.print(mapped[startNode]);
+  Serial.print("\tarrayXOffset: ");
+  Serial.print(arrayXOffset);
+  Serial.print("\tarrayYOffset: ");
+  Serial.print(arrayYOffset);
+  Serial.println("");
+
+  adjustAdjList();
+
 }
 
-void adjustArray() {
+void adjustMappedList() {
+  if (arrayYOffset) {
+    for (int i = (GRID_XY - 1); i > 0; i--) {
+      mapped[i] = mapped[i - 1];
+    }
+    mapped[0] = 0;
+  } else if (arrayXOffset) {
+    for (int i = (GRID_XY - 1); i > (GRID_Y - 1); i--) {
+      mapped[i] = mapped[i - GRID_Y];
+    }
+    mapped[0] = mapped[1] = mapped[2] = mapped[3] = 0;
+  }
+}
 
+void adjustAdjList() {
+  for (int i = 0; i < GRID_XY; i++)
+    for(int j = 1; j <= adjlist[i][0].cost; j++)
+      adjlist[i][j].dest += (GRID_Y * arrayXOffset) + arrayYOffset;
+
+  if (arrayYOffset) {
+    for (int i = (GRID_XY - 1); i > 0; i--) {
+      adjlist[i] = (edgelist_t *) realloc(adjlist[i], (adjlist[i - 1][0].cost + 2) * sizeof(edgelist_t));
+      adjlist[i] = adjlist[i - 1];
+      adjlist[i - 1] = NULL;
+    }
+    adjlist[0] = (edgelist_t *) realloc(adjlist[0], sizeof(edgelist_t));
+    adjlist[0][0].dest = 0;
+    adjlist[0][0].cost = 0;
+  } else if (arrayXOffset) {
+    for (int i = (GRID_XY - 1); i > (GRID_Y - 1); i--) {
+      adjlist[i] = (edgelist_t *) realloc(adjlist[i], (adjlist[i - GRID_Y][0].cost + 2) * sizeof(edgelist_t));
+      adjlist[i] = adjlist[i - GRID_Y];
+      adjlist[i - GRID_Y] = NULL;
+    }
+    adjlist[0] = (edgelist_t *) realloc(adjlist[0], sizeof(edgelist_t));
+    adjlist[1] = (edgelist_t *) realloc(adjlist[1], sizeof(edgelist_t));
+    adjlist[2] = (edgelist_t *) realloc(adjlist[2], sizeof(edgelist_t));
+    adjlist[3] = (edgelist_t *) realloc(adjlist[3], sizeof(edgelist_t));
+    adjlist[0][0].dest = adjlist[1][0].dest = adjlist[2][0].dest = adjlist[3][0].dest = 0;
+    adjlist[0][0].cost = adjlist[1][0].cost = adjlist[2][0].cost = adjlist[3][0].cost = 0;
+  }
 }
 
 void updateAdjList() {
 
+  adjlist[currNode] = (edgelist_t *) realloc(adjlist[currNode], (adjlist[currNode][0].cost + 2) * sizeof(edgelist_t));
+  adjlist[prevNode] = (edgelist_t *) realloc(adjlist[prevNode], (adjlist[prevNode][0].cost + 2) * sizeof(edgelist_t));
+
+  adjlist[currNode][adjlist[currNode][0].cost + 1].dest = prevNode;
+  adjlist[currNode][adjlist[currNode][0].cost + 1].cost = weight;
+  adjlist[prevNode][adjlist[prevNode][0].cost + 1].dest = currNode;
+  adjlist[prevNode][adjlist[prevNode][0].cost + 1].cost = weight;
+
+  adjlist[currNode][0].cost++;
+  adjlist[prevNode][0].cost++;
+
+  //printAdjList();
+
+}
+
+void printAdjList() {
+  for (int i = 0; i < GRID_XY; i++){
+    Serial.print("\nNode ");
+    Serial.print(i);
+    Serial.print(": ");
+    for(int j = 1; j <= adjlist[i][0].cost; j++){
+      Serial.print("(");
+      Serial.print(adjlist[i][j].dest);
+      Serial.print(", ");
+      Serial.print(adjlist[i][j].cost);
+      Serial.print(")\t");
+    }
+  }
+}
+
+void printMappedList() {
+  for (int i = 0; i < GRID_XY; i++)
+    Serial.print(mapped[i]);
 }
 
 void moveDecision() {
-  if (pidIsOn)
+  if (!pidIsOn && command) 
     moveForward(1);
   else if (!distance[1])
     faceLeft(1);
@@ -230,7 +354,8 @@ void moveDecision() {
 }
 
 void waitForMotors() {
-  while(rightStepper.isRunning() || leftStepper.isRunning()){
+  while(rightStepper.distanceToGo() || leftStepper.distanceToGo()){
+    Serial.println("Compensating...");
   }
 }
 
