@@ -100,35 +100,51 @@ void setup() {
 
   resetErrors();
   enableSteppers();
-  startSequence();
+  //startSequence();
+  resetMotorSpeeds();
 
 }
 int count = 0;
 void loop() {
 
-  if (!(mapped[startNode] && (currNode == startNode) && (currHeading == startHeading)) && startNodePathCount) {
+  for (int i = 0; i < SONAR_NUM; i++){
+    if(millis() >= pingTimer[i]){
+      pingTimer[i] += PING_INTERVAL * SONAR_NUM;
+      distance[i] = sensor[i].ping() * 0.034 / 2;
 
-    for (int i = 0; i < SONAR_NUM; i++){
-      if(millis() >= pingTimer[i]){
-        pingTimer[i] += PING_INTERVAL * SONAR_NUM;
-        distance[i] = sensor[i].ping() * 0.034 / 2;
+      if (pidIsOn)
+        getError();
+      else
+        resetErrors();
 
-        if (pidIsOn)
-          getError();
-        else
-          resetErrors();
-        
+      if (pidIsOn) 
         motorSpeedController();
-        prevError = error;
+      else
+        resetMotorSpeeds();
 
-        if (pidIsOn)
-          getLostSteps();
-        else
-          lostSteps = 0;
-      }
+      prevError = error;
+
+      if (pidIsOn)
+        getLostSteps();
+      else
+        lostSteps = 0;
+
+      Serial.print("\nRight: ");
+      Serial.print(distance[0]);
+      Serial.print("\tLeft: ");
+      Serial.print(distance[1]);
+      Serial.print("\tFront: ");
+      Serial.print(distance[2]);
     }
 
+  }
+
+  //if (!(mapped[startNode] && (currNode == startNode) && (currHeading == startHeading)) && !(currNode == startNode && count >= 13)) {
+  if (!(currNode == startNode && count >= 13)) {
+
     if (!rightStepper.distanceToGo() || !leftStepper.distanceToGo()) {
+      rightStepper.stop();
+      leftStepper.stop();
       resetErrors();
       resetMotorSpeeds();
 
@@ -147,9 +163,9 @@ void loop() {
         getWallError();
       else
         wallErrorInSteps = 0;
-      
-      rightStepper.move(lostSteps - wallErrorInSteps - phiErrorInSteps);
-      leftStepper.move(-lostSteps + wallErrorInSteps - phiErrorInSteps);
+
+      rightStepper.move(lostSteps + wallErrorInSteps);
+      leftStepper.move(-lostSteps - wallErrorInSteps);
       waitForMotors();
 
       phi = 0;
@@ -157,25 +173,28 @@ void loop() {
       wallErrorInSteps = 0;
       phiErrorInSteps = 0;
 
-      distance[0] = distances[count][0];
-      distance[1] = distances[count][1];
-      distance[2] = distances[count][2];
+      if(prevNode == startNode && !command){
+        startNodePathCount--;
+        //mapped[startNode] = 1;
+      }
 
+      resetErrors();
+      resetMotorSpeeds();
+      rightStepper.stop();
+      leftStepper.stop();
       moveDecision();
-      count++;
       
       localize();
 
-      if(currNode == startNode && !command)
-        startNodePathCount--;
       Serial.println(startNodePathCount);
 
       if(!command)
         isMapping = true;
 
-      //if (!mapped[currNode])
-      if (!mapped[currNode] && isMapping && !command)
+      if (!mapped[currNode] && isMapping && !command) {
         updateAdjList();
+        count++;
+      }
       
       arrayXOffset = 0;
       arrayYOffset = 0;
@@ -299,14 +318,26 @@ void shortestPathTraversal(){
     moveForward(1);
     currNode = shortestPath[i];
     waitForMotors();
+      pingAllSensors();
+
+      if (distance[2])
+        getWallError();
+      else
+        wallErrorInSteps = 0;
+
+      rightStepper.move(wallErrorInSteps);
+      leftStepper.move(-wallErrorInSteps);
+      waitForMotors();
+      wallErrorInSteps = 0;
   }
 
 }
 
 void localize() {
 
-  if(isMapping && !command)
+  if(isMapping && !command){
     mapped[currNode] = 1;
+  }
 
   prevXPos = currXPos;
   prevYPos = currYPos;
@@ -485,6 +516,7 @@ void printMappedList() {
 }
 
 void moveDecision() {
+  resetMotorSpeeds();
   if (!pidIsOn && command) 
     moveForward(1);
   else if (!distance[1])
@@ -528,6 +560,7 @@ void waitForMotors() {
     }
     Serial.println("Da ba dee da ba dye, da ba dee da ba dye");
   }
+  delay(100);
 }
 
 void getWallError() {
@@ -543,19 +576,25 @@ void getLostSteps() {
   currentRightMotorSpeed = rightStepper.getCurrentSpeed();
   currentLeftMotorSpeed = leftStepper.getCurrentSpeed();
 
-  phi = phi + (0.033 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
-  centerDistance = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * 0.033;
-  lostSteps = lostSteps + (0.033 * centerDistance * (1 - cos(phi)));
+  phi = phi + (PING_INTERVAL / 1000 * 0.1625 * (abs(currentRightMotorSpeed) - abs(currentLeftMotorSpeed)));
+  centerDistance = ((abs(currentRightMotorSpeed) + abs(currentLeftMotorSpeed)) / 2) * PING_INTERVAL / 1000;
+  lostSteps = lostSteps + (PING_INTERVAL / 1000 * centerDistance * (1 - cos(phi)));
 }
 
 void getError() {
     
   if (distance[0] && distance[1])
     error = distance[0] - distance[1];
+  /*
   else if (distance[0] && !distance[1])
     error = distance[0] - DISTANCE_TO_WALL;
   else if (!distance[0] && distance[1])
     error = DISTANCE_TO_WALL - distance[1];
+  */
+  else {
+    error = 0;
+    errorSum = 0;
+  }
 
   errorSum = errorSum + error;
 
@@ -614,6 +653,7 @@ void faceLeft(int counts) {
   leftStepper.move(counts * stepsPerUnitTurn);
   command = (2 * counts) - 1;
   weight = counts + 1;
+  waitForMotors();
 }
 
 void faceRight(int counts) {
@@ -623,6 +663,7 @@ void faceRight(int counts) {
   leftStepper.move(-counts * stepsPerUnitTurn);
   command = 2;
   weight = 2;
+  waitForMotors();
 }
 
 void initializePins() {
@@ -698,9 +739,11 @@ void startSequence() {
   if(!distance[2])
     startNodePathCount++;
   if(startNodePathCount == 0);
-    startNodePathCount = 1;
+    startNodePathCount = 4;
   faceLeft(2);
   waitForMotors();
+  //if (startNodePathCount != 1)
+    //startNodePathCount++;
   command = 0;
   pidIsOn = false;
 }
